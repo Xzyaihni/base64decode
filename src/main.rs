@@ -6,10 +6,10 @@ use std::{
 use sdl2::{
     Sdl,
     EventPump,
-    event::Event,
+    event::{Event, WindowEvent},
     pixels::Color,
     rect::Rect,
-    keyboard::{Scancode, Mod},
+    keyboard::Scancode,
     video::{Window, WindowContext},
     render::{Canvas, TextureCreator, Texture},
     ttf::{
@@ -63,6 +63,7 @@ impl WindowHolder
         let video = ctx.video().unwrap();
 
         let window = video.window("base64 decoder", window_size.x, window_size.y)
+            .resizable()
             .build()
             .unwrap();
 
@@ -138,7 +139,7 @@ impl<'a> Game<'a>
 
     fn create_text_texture(&self, text: &str) -> Option<(Rect, Texture<'a>)>
     {
-        self.font.render(text).solid(Color::RGB(255, 255, 255)).ok().map(|surface|
+        self.font.render(text).blended(Color::RGB(255, 255, 255)).ok().map(|surface|
         {
             let texture_creator = self.window.assets.texture_creator();
             let rect = surface.rect();
@@ -163,7 +164,15 @@ impl<'a> Game<'a>
         match event
         {
             Event::Quit{..} => return false,
-            Event::KeyDown{scancode: Some(code), keymod, ..} =>
+            Event::Window{win_event: WindowEvent::Resized(x, y), ..} =>
+            {
+                self.window.window.window_size = Point2{x: x as u32, y: y as u32};
+            },
+            Event::TextInput{text, ..} =>
+            {
+                self.add_text(&text);
+            },
+            Event::KeyDown{scancode: Some(code), ..} =>
             {
                 match code
                 {
@@ -173,26 +182,9 @@ impl<'a> Game<'a>
                     },
                     Scancode::Space =>
                     {
-                        self.add_char(' ');
+                        self.add_text(" ");
                     },
                     _ => ()
-                }
-
-                let c = code.name();
-
-                if c.len() == 1
-                {
-                    let upper = keymod.contains(Mod::LSHIFTMOD) || keymod.contains(Mod::RSHIFTMOD);
-
-                    let c = if upper
-                    {
-                        c.to_uppercase()
-                    } else
-                    {
-                        c.to_lowercase()
-                    };
-
-                    self.add_char(c.chars().next().unwrap());
                 }
             },
             _ => ()
@@ -201,9 +193,9 @@ impl<'a> Game<'a>
         true
     }
 
-    fn add_char(&mut self, c: char)
+    fn add_text(&mut self, s: &str)
     {
-        self.current_text.push(c);
+        self.current_text += s;
 
         self.update_text();
     }
@@ -313,7 +305,7 @@ impl<'a> Game<'a>
 
         decoded.replace(|c: char|
         {
-            !c.is_ascii_graphic()
+            !(c.is_ascii_graphic() || c == ' ')
         }, &char::REPLACEMENT_CHARACTER.to_string())
     }
 

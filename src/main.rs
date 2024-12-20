@@ -5,11 +5,12 @@ use std::{
 
 use sdl2::{
     Sdl,
+    VideoSubsystem,
     EventPump,
     event::{Event, WindowEvent},
     pixels::Color,
     rect::Rect,
-    keyboard::Scancode,
+    keyboard::{Scancode, Mod},
     video::{Window, WindowContext},
     render::{Canvas, TextureCreator, Texture},
     ttf::{
@@ -51,6 +52,7 @@ impl<'a> Assets<'a>
 pub struct WindowHolder
 {
     ctx: Sdl,
+    video: VideoSubsystem,
     window_size: Point2<u32>,
     canvas: Canvas<Window>
 }
@@ -71,6 +73,7 @@ impl WindowHolder
 
         Self{
             ctx,
+            video,
             window_size,
             canvas
         }
@@ -124,7 +127,7 @@ impl<'a> Game<'a>
 {
     pub fn new(window: GameWindow<'a>, ttf_ctx: &'a Sdl2TtfContext) -> Self
     {
-        let font = Self::create_font(ttf_ctx, 30);
+        let font = Self::create_font(ttf_ctx, 20);
 
         Self{
             window,
@@ -172,7 +175,7 @@ impl<'a> Game<'a>
             {
                 self.add_text(&text);
             },
-            Event::KeyDown{scancode: Some(code), ..} =>
+            Event::KeyDown{scancode: Some(code), keymod, ..} =>
             {
                 match code
                 {
@@ -183,6 +186,14 @@ impl<'a> Game<'a>
                     Scancode::Space =>
                     {
                         self.add_text(" ");
+                    },
+                    Scancode::V if keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD) =>
+                    {
+                        match self.window.window.video.clipboard().clipboard_text()
+                        {
+                            Ok(text) => self.add_text(&text),
+                            Err(err) => eprintln!("clipboard error: {err}")
+                        }
                     },
                     _ => ()
                 }

@@ -1,5 +1,7 @@
 use std::{
     thread,
+    env,
+    process,
     time::Duration
 };
 
@@ -112,6 +114,129 @@ impl<'a> GameWindow<'a>
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum DecodeMode
+{
+    Base64,
+    Binary
+}
+
+impl Default for DecodeMode
+{
+    fn default() -> Self
+    {
+        Self::Base64
+    }
+}
+
+impl DecodeMode
+{
+    fn decode_text(self, text: &str) -> Vec<u8>
+    {
+        match self
+        {
+            Self::Base64 => Self::decode_text_base64(text),
+            Self::Binary => Self::decode_text_binary(text)
+        }
+    }
+
+    fn decode_text_binary(text: &str) -> Vec<u8>
+    {
+        let digits: Vec<bool> = text.chars().filter_map(|c|
+        {
+            match c
+            {
+                '0' => Some(false),
+                '1' => Some(true),
+                _ => None
+            }
+        }).collect();
+
+        digits.chunks(8).map(|chunk|
+        {
+            chunk.iter().rev().enumerate().fold(0, |mut acc, (index, x)|
+            {
+                if *x
+                {
+                    acc += 1 << index;
+                }
+
+                acc
+            })
+        }).collect()
+    }
+
+    fn decode_text_base64(text: &str) -> Vec<u8>
+    {
+        let total_bits = text.len() * 6;
+
+        let full_bytes = total_bits / 8;
+        let padding_bytes = if (total_bits % 8) == 0 { 0 } else { 1 };
+
+        let mut current_bit = 0;
+        let mut values = vec![0; full_bytes + padding_bytes];
+
+        for c in text.chars()
+        {
+            if let Some(index) = Self::decode_single_base64(c)
+            {
+                let current_byte = current_bit / 8;
+
+                let bit_remainder = current_bit % 8;
+                if bit_remainder > 2
+                {
+                    // doesnt fit in the current byte cleanly
+                    let shift = bit_remainder - 2;
+                    values[current_byte] |= index >> shift;
+
+                    let next_shift = 10 - bit_remainder;
+                    values[current_byte + 1] |= index << next_shift;
+                } else
+                {
+                    let shift = 2 - bit_remainder;
+                    values[current_byte] |= index << shift;
+                }
+            }
+
+            current_bit += 6;
+        }
+
+        values
+    }
+
+    fn decode_single_base64(original_char: char) -> Option<u8>
+    {
+        let c = original_char as u32;
+
+        let value = if (0x41..=0x5a).contains(&c)
+        {
+            Some(c - 0x41)
+        } else if (0x61..=0x7a).contains(&c)
+        {
+            Some(c - 0x61 + 26)
+        } else if (0x30..=0x39).contains(&c)
+        {
+            Some(c - 0x30 + 52)
+        } else if b'+' as u32 == c
+        {
+            Some(62)
+        } else if b'/' as u32 == c
+        {
+            Some(63)
+        } else if b'=' as u32 == c
+        {
+            Some(0)
+        } else
+        {
+            eprintln!("invalid char: '{original_char}'");
+
+            None
+        };
+
+        value.map(|x| x as u8)
+    }
+}
+
 struct Game<'a>
 {
     window: GameWindow<'a>,
@@ -119,13 +244,18 @@ struct Game<'a>
     font: Font<'a, 'static>,
     text_texture: Option<(Rect, Texture<'a>)>,
     decoded_texture: Option<(Rect, Texture<'a>)>,
+    mode: DecodeMode,
     current_text: String,
     decoded_text: String
 }
 
 impl<'a> Game<'a>
 {
-    pub fn new(window: GameWindow<'a>, ttf_ctx: &'a Sdl2TtfContext) -> Self
+    pub fn new(
+        window: GameWindow<'a>,
+        ttf_ctx: &'a Sdl2TtfContext,
+        mode: DecodeMode
+    ) -> Self
     {
         let font = Self::create_font(ttf_ctx, 20);
 
@@ -135,6 +265,7 @@ impl<'a> Game<'a>
             font,
             text_texture: None,
             decoded_texture: None,
+            mode,
             current_text: String::new(),
             decoded_text: String::new()
         }
@@ -220,7 +351,7 @@ impl<'a> Game<'a>
 
     fn update_text(&mut self)
     {
-        self.decoded_text = Self::decode_text(&self.current_text);
+        self.decoded_text = Self::decode_text(self.mode, &self.current_text);
 
         self.recreate_textures();
     }
@@ -291,9 +422,9 @@ impl<'a> Game<'a>
         self.canvas().present();
     }
 
-    fn decode_text(text: &str) -> String
+    fn decode_text(mode: DecodeMode, text: &str) -> String
     {
-        let mut values = Self::decode_text_raw(text);
+        let mut values = mode.decode_text(text);
 
         loop
         {
@@ -318,76 +449,6 @@ impl<'a> Game<'a>
         {
             !(c.is_ascii_graphic() || c == ' ')
         }, &char::REPLACEMENT_CHARACTER.to_string())
-    }
-
-    fn decode_text_raw(text: &str) -> Vec<u8>
-    {
-        let total_bits = text.len() * 6;
-
-        let full_bytes = total_bits / 8;
-        let padding_bytes = if (total_bits % 8) == 0 { 0 } else { 1 };
-
-        let mut current_bit = 0;
-        let mut values = vec![0; full_bytes + padding_bytes];
-
-        for c in text.chars()
-        {
-            if let Some(index) = Self::decode_single(c)
-            {
-                let current_byte = current_bit / 8;
-
-                let bit_remainder = current_bit % 8;
-                if bit_remainder > 2
-                {
-                    // doesnt fit in the current byte cleanly
-                    let shift = bit_remainder - 2;
-                    values[current_byte] |= index >> shift;
-
-                    let next_shift = 10 - bit_remainder;
-                    values[current_byte + 1] |= index << next_shift;
-                } else
-                {
-                    let shift = 2 - bit_remainder;
-                    values[current_byte] |= index << shift;
-                }
-            }
-
-            current_bit += 6;
-        }
-
-        values
-    }
-
-    fn decode_single(original_char: char) -> Option<u8>
-    {
-        let c = original_char as u32;
-
-        let value = if (0x41..=0x5a).contains(&c)
-        {
-            Some(c - 0x41)
-        } else if (0x61..=0x7a).contains(&c)
-        {
-            Some(c - 0x61 + 26)
-        } else if (0x30..=0x39).contains(&c)
-        {
-            Some(c - 0x30 + 52)
-        } else if b'+' as u32 == c
-        {
-            Some(62)
-        } else if b'/' as u32 == c
-        {
-            Some(63)
-        } else if b'=' as u32 == c
-        {
-            Some(0)
-        } else
-        {
-            eprintln!("invalid char: '{original_char}'");
-
-            None
-        };
-
-        value.map(|x| x as u8)
     }
 }
 
@@ -433,8 +494,35 @@ impl<'a> GameWithEvents<'a>
     }
 }
 
+fn print_help() -> !
+{
+    eprintln!("usage: {} [args]", env::args().next().unwrap());
+    eprintln!("args:");
+    eprintln!(" -b, --binary  decode binary");
+    eprintln!(" --base64      decode base64");
+    eprintln!(" -h, --help    show this message");
+
+    process::exit(1)
+}
+
 fn main()
 {
+    let mode = env::args().nth(1).map(|arg|
+    {
+        match arg.as_ref()
+        {
+            "-b" | "--binary" => DecodeMode::Binary,
+            "--base64" => DecodeMode::Base64,
+            "-h" | "--help" => print_help(),
+            x =>
+            {
+                eprintln!("unrecognized argument: {x}");
+
+                print_help()
+            }
+        }
+    }).unwrap_or_default();
+
     let window_size = Point2{x: 1024, y: 100};
 
     let ttf_ctx = sdl2::ttf::init().unwrap();
@@ -447,7 +535,7 @@ fn main()
     let events = window_holder.events();
     let window = GameWindow::new(&mut window_holder, assets);
 
-    let game_inner = Game::new(window, &ttf_ctx);
+    let game_inner = Game::new(window, &ttf_ctx, mode);
     let game = GameWithEvents::new(game_inner, events);
 
     game.run();
